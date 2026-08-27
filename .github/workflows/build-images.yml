@@ -1,0 +1,100 @@
+name: Build unofficial SillyBunny images
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: sillybunny-unofficial-builds
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPOSITORY: SillyBunnyTeam/SillyBunny
+  IMAGE_BASENAME: sillybunny-unofficial-builds
+
+jobs:
+  build:
+    name: Build ${{ matrix.upstream_branch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - upstream_branch: main
+            tag: Stable
+          - upstream_branch: staging
+            tag: Staging
+
+    steps:
+      - name: Check out upstream source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPOSITORY }}
+          ref: ${{ matrix.upstream_branch }}
+          fetch-depth: 1
+          path: upstream
+
+      - name: Collect image metadata
+        id: metadata
+        shell: bash
+        working-directory: upstream
+        run: |
+          echo "upstream_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${IMAGE_BASENAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: upstream
+          file: upstream/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.metadata.outputs.image }}:${{ matrix.tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/SillyBunnyTeam/SillyBunny
+            org.opencontainers.image.revision=${{ steps.metadata.outputs.upstream_sha }}
+            org.opencontainers.image.version=${{ matrix.upstream_branch }}
+            io.github.sillybunny-unofficial-builds.upstream-branch=${{ matrix.upstream_branch }}
+
+      - name: Write immutable image reference to job summary
+        shell: bash
+        env:
+          IMAGE: ${{ steps.metadata.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAG: ${{ matrix.tag }}
+          UPSTREAM_BRANCH: ${{ matrix.upstream_branch }}
+          UPSTREAM_SHA: ${{ steps.metadata.outputs.upstream_sha }}
+        run: |
+          {
+            echo "## ${TAG} image"
+            echo
+            echo "- Upstream branch: \`${UPSTREAM_BRANCH}\`"
+            echo "- Upstream commit: \`${UPSTREAM_SHA}\`"
+            echo "- Multi-platform image: \`${IMAGE}:${TAG}\` (linux/amd64, linux/arm64)"
+            echo "- Immutable digest: \`${DIGEST}\`"
+            echo
+            echo '### Pin by digest'
+            echo
+            echo "\`\`\`sh"
+            echo "docker pull ${IMAGE}@${DIGEST}"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
