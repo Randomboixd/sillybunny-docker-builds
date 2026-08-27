@@ -73,6 +73,7 @@ jobs:
             org.opencontainers.image.source=https://github.com/SillyBunnyTeam/SillyBunny
             org.opencontainers.image.revision=${{ steps.metadata.outputs.upstream_sha }}
             org.opencontainers.image.version=${{ matrix.upstream_branch }}
+            org.opencontainers.image.licenses=AGPL-3.0-only
             io.github.sillybunny-unofficial-builds.upstream-branch=${{ matrix.upstream_branch }}
 
       - name: Write immutable image reference to job summary
